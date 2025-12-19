@@ -7,6 +7,7 @@
 #include <atomic>
 #include <csignal>
 #include <sys/stat.h>
+#include <vector>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -25,6 +26,7 @@ std::string css_cache;
 time_t html_mod_time = 0;
 time_t css_mod_time = 0;
 
+// Загрузка текстового файла
 std::string load_file(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) return "";
@@ -32,6 +34,40 @@ std::string load_file(const std::string& path) {
     buffer << file.rdbuf();
     return buffer.str();
 }
+
+// Загрузка бинарного файла
+std::vector<char> load_binary_file(const std::string& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return {};
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<char> buffer(size);
+    if (file.read(buffer.data(), size)) return buffer;
+    return {};
+}
+
+// Определение Content-Type по расширению
+std::string get_content_type(const std::string& path) {
+    if (path.rfind(".html") == path.size() - 5) return "text/html";
+    if (path.rfind(".css") == path.size() - 4) return "text/css";
+    if (path.rfind(".js") == path.size() - 3) return "application/javascript";
+    if (path.rfind(".png") == path.size() - 4) return "image/png";
+    if (path.rfind(".jpg") == path.size() - 4) return "image/jpeg";
+    if (path.rfind(".jpeg") == path.size() - 5) return "image/jpeg";
+    if (path.rfind(".gif") == path.size() - 4) return "image/gif";
+    if (path.rfind(".svg") == path.size() - 4) return "image/svg+xml";
+    if (path.rfind(".ico") == path.size() - 4) return "image/x-icon";
+    return "application/octet-stream";
+}
+
+std::string get_request_path(const std::string& request) {
+    size_t start = request.find("GET /") + 5;
+    size_t end = request.find(" HTTP/1.1");
+    if (start == std::string::npos || end == std::string::npos) return "/";
+    std::string path = request.substr(start, end - start);
+    return path.empty() ? "/" : path;
+}
+
 
 time_t get_file_mod_time(const std::string& path) {
     struct stat result{};
@@ -133,31 +169,60 @@ int main() {
         if (client < 0) continue;
 
         char buffer[4096] = {0};
-        recv(client, buffer, sizeof(buffer), 0);
+        recv(client, buffer, sizeof(buffer) - 1, 0);
 
         std::string request(buffer);
-        std::string path = "index.html";
-        std::string content;
+        std::string path = get_request_path(request);
+        if (path == "/") path = "index.html";
 
-        if (request.find("GET /style.css") != std::string::npos) {
-            path = "style.css";
-            content = css_cache;
-            if (content.empty()) content = "/* style.css not found */";
+
+        std::string response;
+        std::vector<char> content_binary;
+        std::string content_text;
+
+        bool is_binary = false;
+        std::string content_type = get_content_type(path);
+        if (content_type.rfind("text/") == 0) {
+            if (path == "index.html") {
+                content_text = html_cache;
+            } else if (path == "style.css") {
+                content_text = css_cache;
+            } else {
+                content_text = load_file(path);
+            }
         } else {
-            content = html_cache;
-            if (content.empty()) content = "<h1>index.html not found</h1>";
+            is_binary = true;
+            content_binary = load_binary_file(path);
         }
 
-        std::string content_type = (path == "style.css") ? "text/css" : "text/html";
+        size_t content_size = is_binary ? content_binary.size() : content_text.size();
 
-        std::string response =
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: " + content_type + "\r\n"
-            "Content-Length: " + std::to_string(content.size()) + "\r\n"
-            "Connection: close\r\n\r\n" +
-            content;
+        if (content_size > 0) {
+            std::stringstream ss;
+            ss << "HTTP/1.1 200 OK\r\n";
+            ss << "Content-Type: " << content_type << "\r\n";
+            ss << "Content-Length: " << content_size << "\r\n";
+            ss << "Connection: close\r\n\r\n";
+            response = ss.str();
+            
+            send(client, response.c_str(), response.size(), 0);
+            if(is_binary) {
+                send(client, content_binary.data(), content_binary.size(), 0);
+            } else {
+                send(client, content_text.c_str(), content_text.size(), 0);
+            }
 
-        send(client, response.c_str(), response.size(), 0);
+        } else {
+            std::string not_found_content = "<h1>404 Not Found</h1>";
+            std::stringstream ss;
+            ss << "HTTP/1.1 404 Not Found\r\n";
+            ss << "Content-Type: text/html\r\n";
+            ss << "Content-Length: " << not_found_content.size() << "\r\n";
+            ss << "Connection: close\r\n\r\n";
+            ss << not_found_content;
+            response = ss.str();
+            send(client, response.c_str(), response.size(), 0);
+        }
 
 #ifdef _WIN32
         closesocket(client);
@@ -175,4 +240,5 @@ int main() {
 
     return 0;
 }
+
 
