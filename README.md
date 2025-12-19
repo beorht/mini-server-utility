@@ -20,7 +20,7 @@
 
 ## Файлы проекта
 
-* `main.cpp` — исходный код сервера.
+* `src/server.cpp` — исходный код сервера.
 * `index.html` — HTML файл для отображения на сервере.
 * `style.css` — CSS файл для стилизации страницы.
 
@@ -31,13 +31,13 @@
 ### Linux
 
 ```bash
-g++ main.cpp -o server -pthread
+g++ src/server.cpp -o build/server -pthread
 ```
 
 ### Windows (Visual Studio / g++)
 
 ```bash
-g++ main.cpp -o server.exe -lws2_32 -pthread
+g++ src/server.cpp -o build/server.exe -lws2_32 -pthread
 ```
 
 > На Windows необходимо подключать библиотеку `ws2_32` для работы с сокетами.
@@ -50,8 +50,8 @@ g++ main.cpp -o server.exe -lws2_32 -pthread
 2. Запустите сервер:
 
 ```bash
-./server      # Linux
-server.exe    # Windows
+./build/server      # Linux
+build/server.exe    # Windows
 ```
 
 3. Откройте браузер и перейдите по адресу: [http://localhost:8080](http://localhost:8080)
