@@ -17,6 +17,7 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
@@ -83,6 +84,8 @@ static std::string base64_encode(const uint8_t* data, size_t len) {
 
 int server_fd = -1;
 std::atomic<bool> running(true);
+std::string serve_dir = ".";
+std::string bind_host = "";  // empty = INADDR_ANY (all interfaces)
 
 std::unordered_map<std::string, std::string> text_cache;
 std::unordered_map<std::string, time_t>      file_mod_times;
@@ -101,6 +104,14 @@ void log(int status, const std::string& path) {
 }
 
 // ─── File helpers ────────────────────────────────────────────────────────────
+
+std::string full_path(const std::string& name) {
+    return serve_dir + "/" + name;
+}
+
+bool is_safe_path(const std::string& path) {
+    return path.find("..") == std::string::npos && path.find('\0') == std::string::npos;
+}
 
 std::string load_file(const std::string& path) {
     std::ifstream file(path);
@@ -148,7 +159,9 @@ bool is_watched_extension(const std::string& name) {
 std::vector<std::string> scan_watched_files() {
     std::vector<std::string> files;
 #ifdef _WIN32
-    WIN32_FIND_DATA fd; HANDLE h = FindFirstFile("*", &fd);
+    WIN32_FIND_DATA fd;
+    std::string pattern = serve_dir + "/*";
+    HANDLE h = FindFirstFile(pattern.c_str(), &fd);
     if (h == INVALID_HANDLE_VALUE) return files;
     do {
         std::string name(fd.cFileName);
@@ -157,7 +170,7 @@ std::vector<std::string> scan_watched_files() {
     } while (FindNextFile(h, &fd));
     FindClose(h);
 #else
-    DIR* dir = opendir(".");
+    DIR* dir = opendir(serve_dir.c_str());
     if (!dir) return files;
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
@@ -290,9 +303,17 @@ int main(int argc, char* argv[]) {
 #endif
 
     int port = 8080;
-    if (argc > 1) {
-        port = std::atoi(argv[1]);
-        if (port <= 0 || port > 65535) { std::cerr << "Invalid port: " << argv[1] << "\n"; return 1; }
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if ((arg == "--port" || arg == "-p") && i + 1 < argc) {
+            port = std::atoi(argv[++i]);
+            if (port <= 0 || port > 65535) { std::cerr << "Invalid port: " << argv[i] << "\n"; return 1; }
+        } else if ((arg == "--host" || arg == "-H") && i + 1 < argc) {
+            bind_host = argv[++i];
+        } else if (arg.rfind("--", 0) != 0) {
+            port = std::atoi(argv[i]);
+            if (port <= 0 || port > 65535) { std::cerr << "Invalid port: " << argv[i] << "\n"; return 1; }
+        }
     }
 
     signal(SIGINT, stop_server);
@@ -310,14 +331,21 @@ int main(int argc, char* argv[]) {
     }
 
     sockaddr_in address{};
-    address.sin_family      = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port        = htons(port);
+    address.sin_family = AF_INET;
+    address.sin_port   = htons(port);
+    if (bind_host.empty()) {
+        address.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        if (inet_pton(AF_INET, bind_host.c_str(), &address.sin_addr) != 1) {
+            std::cerr << "Invalid host address: " << bind_host << "\n"; return 1;
+        }
+    }
 
     if (bind(server_fd, (sockaddr*)&address, sizeof(address)) < 0) { std::cerr << "Bind failed\n"; return 1; }
     if (listen(server_fd, 10) < 0) { std::cerr << "Listen failed\n"; return 1; }
 
-    std::cout << "Server started: http://localhost:" << port << "\n";
+    std::string display_host = bind_host.empty() ? "0.0.0.0" : bind_host;
+    std::cout << "Server started: http://" << display_host << ":" << port << "\n";
 
     {
         std::lock_guard<std::mutex> lock(cache_mutex);
