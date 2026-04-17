@@ -305,15 +305,42 @@ int main(int argc, char* argv[]) {
     int port = 8080;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if ((arg == "--port" || arg == "-p") && i + 1 < argc) {
+        if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0] << " [options] [port]\n"
+                      << "\n"
+                      << "A lightweight C++ HTTP server with live reload.\n"
+                      << "\n"
+                      << "Options:\n"
+                      << "  -p, --port <port>   Set the port to listen on (default: 8080)\n"
+                      << "  -H, --host <host>   Set the host/IP to bind to (default: 0.0.0.0)\n"
+                      << "  -d, --dir <path>    Set the directory to serve files from (default: .)\n"
+                      << "  -h, --help          Show this help message and exit\n"
+                      << "\n"
+                      << "Examples:\n"
+                      << "  " << argv[0] << "                    Start on port 8080\n"
+                      << "  " << argv[0] << " 3000                Start on port 3000\n"
+                      << "  " << argv[0] << " -p 3000             Start on port 3000\n"
+                      << "  " << argv[0] << " -H 127.0.0.1        Bind to localhost only\n"
+                      << "  " << argv[0] << " -d /var/www/html    Serve files from /var/www/html\n";
+            return 0;
+        } else if ((arg == "--port" || arg == "-p") && i + 1 < argc) {
             port = std::atoi(argv[++i]);
             if (port <= 0 || port > 65535) { std::cerr << "Invalid port: " << argv[i] << "\n"; return 1; }
         } else if ((arg == "--host" || arg == "-H") && i + 1 < argc) {
             bind_host = argv[++i];
+        } else if ((arg == "--dir" || arg == "-d") && i + 1 < argc) {
+            serve_dir = argv[++i];
         } else if (arg.rfind("--", 0) != 0) {
             port = std::atoi(argv[i]);
             if (port <= 0 || port > 65535) { std::cerr << "Invalid port: " << argv[i] << "\n"; return 1; }
         }
+    }
+
+    // Validate serve directory
+    struct stat dir_stat{};
+    if (stat(serve_dir.c_str(), &dir_stat) != 0 || !(dir_stat.st_mode & S_IFDIR)) {
+        std::cerr << "Directory not found: " << serve_dir << "\n";
+        return 1;
     }
 
     signal(SIGINT, stop_server);
@@ -345,6 +372,7 @@ int main(int argc, char* argv[]) {
     if (listen(server_fd, 10) < 0) { std::cerr << "Listen failed\n"; return 1; }
 
     std::string display_host = bind_host.empty() ? "0.0.0.0" : bind_host;
+    std::cout << "Serving from: " << serve_dir << "\n";
     std::cout << "Server started: http://" << display_host << ":" << port << "\n";
 
     {
